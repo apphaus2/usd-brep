@@ -6,3 +6,7 @@ _builtpackages/
 
 # Python bytecode from repo tooling
 __pycache__/
+
+# Test run output
+tests/**/OutputFiles/
+tests/prog_test/CON
