@@ -1,0 +1,7 @@
+<project toolsVersion="5.6">
+  <!-- Fork override (not upstream): upstream 1.0.0 pins python 3.12.15+nv1, which is not on the
+       public Packman CDN. 3.12.13+nv5 (pinned by upstream 0.2.0) is. See ANDROID_PORT_NOTES.md. -->
+  <dependency name="python" linkPath="../_build/target-deps/python">
+    <package name="python" version="3.12.13+nv5-${platform_target_abi}" />
+  </dependency>
+</project>
