@@ -194,9 +194,80 @@ Built by `apphaus2/usd-android-packages` (`scripts/build-all.sh`). Its README ha
   variables in `arch/stackTrace.cpp`, which clang otherwise ignores.
 
 ## Packman (phase 02)
-- Remote configuration mechanism used:
-- Deps file / entries added:
-- Platform tag chosen and why:
+
+**How the in-tree client works** (Packman 8.6.1, bootstrapped by `tools/packman/packman`; the
+client code lives in `~/.cache/packman/packman-common/8.6.1/`):
+- **Config files:** a user-level `~/config.packman.xml`, plus `$PM_INSTALL_PATH/config.packman.xml`
+  (`tools/packman/config.packman.xml`, which defines the public `cloudfront` https remote). Both are
+  merged, and `PM_REMOTE_<NAME>_<ATTR>` env vars override attributes. The package cache is
+  `$PM_PACKAGES_ROOT`, default `~/.cache/packman`. `target-deps` links point into `chk/<name>/<version>`.
+- **Remotes:** `<remote2 name>` with `<transport actions protocol packageLocation>`. Protocols
+  are `file`, `http(s)`, `s3`, `gtl` and `nstorage`. A `file` transport reads
+  `<packageLocation>/<name>@<version>.{7z,zip}`; a relative `packageLocation` resolves against the
+  current directory. **Project files can define `<remote2>` themselves** (toolsVersion ≥ 5.6) and
+  select them with `remotes="..."`, but may only reference remotes defined in the same file.
+- **Per-platform selection in deps XML:** `platforms="..."` on `<package>`, as used by
+  `deps/host-deps.packman.xml` for premake, plus `${platform}` in names and versions. Upstream
+  selects target deps per platform by *file list* in `repo.toml`, not by attributes.
+- **Tokens:** attributes accept `$token` / `${token}` (from repo_build) and `$env{VAR}`.
+  `repo_build` passes `fetch.packman_extra_tokens`, which can contain `${root}`, into every pull.
+- **Integrity:** `<package checksum="sha256">` makes Packman verify the archive (toolsVersion ≥ 7.6).
+- **Config filters (the main pitfall):** `repo_man` applies `"platform:<p>"` keys in `repo.toml`
+  against the **host** platform when it loads the config, which is why upstream's
+  `"platform:macos-universal"` works on a Mac. A cross target needs `repo_build`'s own
+  **`"platform_target:<p>"`** filter (`repo_build/main.py:1229`), applied to `[repo_build]` once the
+  `-p` target is known.
+
+**Remote configuration mechanism used:** a **project-level file remote** inside the Android deps
+file. Its `packageLocation` is the token `${android_packages_dist}`, which `repo.toml` defines for
+the Android target only as `${root}/../usd-android-packages/dist`, so it resolves to an absolute
+path at run time. No user-level config, env var or generated file is needed, and the public
+`cloudfront` remote is untouched.
+
+**Deps file / entries added:** a new `deps/android-deps.packman.xml`. Upstream selects target deps
+per platform by file list, so the fork follows that rather than adding `platforms=` attributes to
+upstream files. It's pulled *instead of* `target-deps-python.packman.xml` and
+`target-deps.packman.xml`, so Python and pybind11 are excluded for Android.
+- `usd-${config}` → `usd.core.release@25.11-r1-android-aarch64`, linked at
+  `_build/target-deps/usd/${config}`. The path matches upstream, so `use_usd()` and `use_usd_tbb()`
+  resolve unchanged. Only a release build exists, so a debug pull links the same package.
+- `tbb` → `onetbb@2021.13.0-r1-android-aarch64`, linked at `_build/target-deps/tbb`.
+- Both carry `checksum=` with the release's sha256. Host and repo tooling (`host-deps`,
+  `repo-deps`: premake, `repo_*`) are untouched; they run on the host.
+- `tools/android/fetch-packages.sh` reads names, versions and checksums from that file, and the
+  release tag and dist folder from `tools/android/packages.env`. It downloads any missing zip from
+  the GitHub release (with `gh`, or `curl` without it) and checks it. So a fresh clone of the fork
+  builds without a local `usd-android-packages` build.
+
+**Platform tag chosen and why:** `android-aarch64`. It follows the tree's `<os>-<arch>`
+convention (`linux-x86_64`, `linux-aarch64`, `windows-x86_64`), using the arch spelling the
+premake platforms use (`aarch64`, not `arm64`).
+- The deps file spells the tag out instead of using `${platform}`. `repo.toml` sets
+  `abi = "2.35"` for the Linux host (a host-filtered token). `repo_build` then tries
+  `get_abi_platform_translation("android-aarch64", "2.35")`, gets `None` for a non-Linux/Windows
+  platform, and Packman falls back to the host platform for `${platform}`. The first attempt failed
+  with `Package not found ... (name: usd.core.release, version: 25.11-r1-linux-x86_64)`.
+- `repo_man`'s platform table has no `android-aarch64`, so `repo_build`'s VS Code Python-env
+  generation fails with `KeyError: 'shell_ext'`. It's disabled for the Android target; there's no
+  Python on Android anyway.
+- `prebuild.toml` and `premake5*.lua` needed no changes for resolution: premake `gmake2`
+  generation runs and the schema staging works. Whether the generated projects target Android
+  properly is phase 03.
+
+**Gate (2026-10-12):**
+```
+tools/android/fetch-packages.sh          # dist/ emptied first: downloads both zips, sha256 ok, rc=0
+rm -rf _build _compiler ~/.cache/packman/chk/{usd.core.release,onetbb}
+./prebuild.sh -p android-aarch64         # rc=0; Packman: "missing from local storage" -> Extracting
+                                         #   usd.core.release@25.11-r1-android-aarch64.zip, onetbb@...zip
+ls _build/target-deps                    # tbb -> .../onetbb/2021.13.0-r1-android-aarch64
+                                         # usd/release -> .../usd.core.release/25.11-r1-android-aarch64
+find -L _build/target-deps/usd/release/lib/usd -name plugInfo.json | wc -l   # 19 (incl. lib/usd/plugInfo.json)
+./prebuild.sh                            # host: rc=0, python/pybind11/usd.py312.manylinux_2_35_x86_64 as before
+```
+`_build/target-deps` is shared across platforms, as upstream designed it. Switching `-p` relinks
+`usd/<config>`, while links only one platform pulls stay behind (e.g. `tbb` after a host
+prebuild); nothing on the other platform references them.
 
 ## Build target decisions (phase 03)
 - Approach A (premake) outcome:
@@ -209,6 +280,7 @@ Built by `apphaus2/usd-android-packages` (`scripts/build-all.sh`). Its README ha
 |------|-------|--------|----------------|
 | `.gitignore` (new file) | — | Ignore `_build/`, `_compiler/`, `_repo/`, `_builtpackages/` | Upstream has no `.gitignore`. Keeps build output out of commits. |
 | `deps/target-deps-python.packman.xml.user` (new file) | — | Packman `.user` override pinning `python@3.12.13+nv5-${platform_target_abi}` | Upstream pin `3.12.15+nv1` is missing from the public CDN. Without this, `./prebuild.sh` fails on a fresh clone (see Known issues). Remove once upstream publishes or re-pins. |
+| `repo.toml` | 58-66 (added, nothing changed) | `[repo_build]` keys under `"platform_target:android-aarch64"`: `fetch.packman_target_files_to_pull = [deps/android-deps.packman.xml]`, `fetch.packman_extra_tokens.android_packages_dist`, and `vscode.generate_python_env_file/generate_python_setup_shell_script = false` | Pull Android deps instead of the Python + host-USD files; give the file remote an absolute path; avoid `KeyError: 'shell_ext'` (repo_man has no android platform mapping). `"platform:"` filters match the host, not the target, so they can't be used. |
 
 ## Source edits (verbatim diff hunks)
 ```diff

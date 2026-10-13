@@ -1,0 +1,27 @@
+<project toolsVersion="7.6" remotes="android-packages">
+  <!-- Target deps for platform android-aarch64 (pulled instead of the target-deps*.packman.xml files;
+       see repo.toml fetch."platform_target:android-aarch64"). Packages are built by
+       apphaus2/usd-android-packages and served from a local folder of zips: ${android_packages_dist}
+       is a repo.toml packman_extra_tokens entry, ${root}/../usd-android-packages/dist by default.
+       tools/android/fetch-packages.sh fills that folder from the GitHub release if it is empty.
+       Names, versions and checksums here must match the release; fetch-packages.sh reads them.
+       The platform tag is spelled out rather than ${platform}: with repo.toml's linux abi token set,
+       repo_build cannot translate android-aarch64 to an ABI platform and Packman falls back to the
+       host platform for ${platform}. -->
+  <remote2 name="android-packages">
+    <transport actions="download list" protocol="file" packageLocation="${android_packages_dist}" />
+  </remote2>
+
+  <!-- OpenUSD 25.11 core (no Python, no imaging) with oneTBB merged in, laid out like upstream's
+       usd.py312.*.stock.* packages. Only a release build exists, so debug links it too. -->
+  <dependency name="usd-${config}" linkPath="../_build/target-deps/usd/${config}">
+    <package name="usd.core.release" version="25.11-r1-android-aarch64"
+             checksum="0007cc0da1c40054a57c9903db5d232f0330e208d04e4b2ac5f9f55c1844bde4" />
+  </dependency>
+
+  <!-- oneTBB 2021.13.0 on its own (also bundled in the USD package above). -->
+  <dependency name="tbb" linkPath="../_build/target-deps/tbb">
+    <package name="onetbb" version="2021.13.0-r1-android-aarch64"
+             checksum="eafe3979690e879963d62b004fc9b5414c66e41da4325d4f2314aa75eb3e1885" />
+  </dependency>
+</project>

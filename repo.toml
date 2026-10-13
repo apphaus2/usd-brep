@@ -55,6 +55,15 @@ fetch.packman_target_files_to_pull = [
 fetch."platform:macos-universal".packman_target_files_to_pull = [
     "${root}/deps/target-deps-python-macos.packman.xml",
 ]
+# Android (fork addition, see ANDROID_PORT_NOTES.md): no Python; USD + TBB from a local file remote.
+# "platform_target:" (repo_build's target filter), not "platform:" (repo_man's host filter): Android
+# is always cross-compiled.
+fetch."platform_target:android-aarch64".packman_target_files_to_pull = [
+    "${root}/deps/android-deps.packman.xml",
+]
+fetch."platform_target:android-aarch64".packman_extra_tokens = { android_packages_dist = "${root}/../usd-android-packages/dist" }
+# No Python on Android; repo_man also has no shell_ext mapping for android-aarch64.
+vscode."platform_target:android-aarch64" = { generate_python_env_file = false, generate_python_setup_shell_script = false }
 
 msbuild.sln_file = "usd-brep.sln"
 
