@@ -233,6 +233,11 @@ Built by `apphaus2/usd-android-packages` (`scripts/build-all.sh`). Its README ha
   file) pins `3.12.13+nv5`, the version upstream 0.2.0 used, which is on the CDN. Report upstream.
 - README says test fixtures are Git LFS, but the public repo has no `.gitattributes` and no LFS
   pointer files. `git lfs pull` is a no-op. Fixtures (`TestFiles/`, 28 MB) are plain git.
+- **OpenUSD on Android logs `ArchWarn: ARCH_CACHE_LINE_SIZE != Arch_ObtainCacheLineSize()`** once
+  per process (`pxr/base/arch/assumptions.cpp:140`). Bionic's `sysconf(_SC_LEVEL1_DCACHE_LINESIZE)`
+  returns 0. On the Quest 3 (Android 14, API 34) the real L1D line is 64 bytes (`CTR_EL0`), which
+  equals `ARCH_CACHE_LINE_SIZE`, so this is cosmetic. A possible OpenUSD fix: read `CTR_EL0` on
+  Android/aarch64. Not patched; flagged for an OpenUSD upstream issue.
 - Stale comment at `premake5-libraries.lua:229` (says 26.08, no imaging; the pin is 25.11 with imaging).
 
 ## Upstream issue
