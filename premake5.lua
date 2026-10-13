@@ -9,6 +9,12 @@
 -- Note: Most of this should probably be relocated to repo_build and
 -- loaded from there instead of copying around everywhere. #TODO
 
+-- Fork: the android-aarch64 target has its own workspace (see premake5-android.lua).
+if _OPTIONS["platform-target"] == "android-aarch64" then
+    include("premake5-android.lua")
+    return
+end
+
 include("premake5-public.lua")
 
 ------------------------------------------------------------------------------------------------------------------------

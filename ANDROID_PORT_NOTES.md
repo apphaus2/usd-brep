@@ -270,10 +270,96 @@ find -L _build/target-deps/usd/release/lib/usd -name plugInfo.json | wc -l   # 1
 prebuild); nothing on the other platform references them.
 
 ## Build target decisions (phase 03)
-- Approach A (premake) outcome:
-- Approach B (CMake) used? why:
-- Projects excluded on Android:
-- Resource collection:
+
+**Approach A (premake) outcome: works. No source changes.** The command is
+`tools/android/build.sh [release|debug]`, which runs:
+1. `tools/android/fetch-packages.sh`.
+2. `./prebuild.sh -p android-aarch64`, for Packman, the `prebuild.toml`/`prebuild_copy` staging
+   into `_build/android-aarch64/<cfg>` and the omniSolid schema.
+3. premake `gmake2` with `--platform-target=android-aarch64`, generating `_compiler/gmake2-android`.
+4. `make config=<cfg>_aarch64` with the NDK's `clang`/`clang++`/`llvm-ar`.
+5. Resource collection and `MANIFEST.txt`, then a check of every `.so`.
+
+A clean release build takes about 42 s with 10 jobs, with zero compiler warnings.
+
+- **Why `build.sh` drives premake and make instead of `./repo.sh build -p android-aarch64`:**
+  `repo_build` (1.34.6) never passes `--platform-target` to premake
+  (`build.py:generate_projects`). It always adds `--os=<host>`, and its make step builds
+  `config=<cfg>_<arch>` with the arch taken from a `linux-`/`macos-` prefix, so it's empty for
+  `android-aarch64`. Teaching it a non-host toolchain would mean patching `repo_build`, so for
+  Android the build script makes the two calls `repo_build` would have made. `repo.sh build` is
+  untouched and still used for Packman and staging (via `prebuild.sh`).
+- **`premake5-android.lua`** (new) defines its own `usd-brep` workspace, which
+  `premake5.lua` includes and returns from when `--platform-target=android-aarch64` (see the
+  upstream files table). It sets `platform = "android-aarch64"`, so outputs go to
+  `_build/android-aarch64/{debug,release}` and objects to `_build/intermediate/android-aarch64`.
+  Configurations are `debug`/`release`, the platform is `aarch64`, and the toolset is `clang`. The
+  upstream project files are included **unchanged**, and only three helpers are overridden in Lua:
+  - `use_python()` does nothing, since `use_usd()` called it and it linked libpython3.12.
+  - `link_usd_common()` drops `usd_python`.
+  - `use_usd()` drops the build-tree USD runpath.
+- **Toolchain flags** are the NDK's own CMake-toolchain set:
+  - `--target=aarch64-linux-android32` and `--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/<host>/sysroot`.
+  - `-fPIC` (`pic "On"`), `-DANDROID`, `-ffunction-sections -fdata-sections -funwind-tables
+    -fstack-protector-strong`.
+  - Link: `-nostdlib++` + `c++_shared`, `log`, `-Wl,--no-undefined,-z,relro,-z,now,--gc-sections,--build-id=sha1`.
+  - `-D__ANDROID_API__=32` is **not** passed: clang defines it from `--target`, and redefining it
+    would be a `-Wmacro-redefined` error under `FatalCompileWarnings`. The NDK sysroot has no
+    plain `libc++.so`, hence `-nostdlib++` with an explicit `c++_shared`.
+  - `--os=linux`: bionic is a Linux userland, so the projects' `filter "system:linux"` settings
+    apply as on the host (`-fvisibility=hidden` + export macros, `links { "dl" }`, SMLib's
+    `tbb`/`tbbmalloc`).
+- **Warnings.** Upstream's `FatalCompileWarnings` is kept, along with its Linux set
+  (`-Wall -Wunused-parameter`). Gcc's `-Wshadow=local` is dropped because clang 19 rejects it
+  (`unknown warning option '-Wshadow=local'`). On top of that come the clang suppressions upstream
+  already uses for macOS (`macos_warning_suppressions()` and `-Wno-missing-braces` from
+  `macos_common_buildoptions()`; first hit: `SmTransform.h:135 suggest braces around
+  initialization of subobject`). Two more, both benign and reported by clang/bionic but not by the
+  host gcc/glibc:
+  - `-Wno-misleading-indentation`: `SmTopologySweep.cpp:1773`, a statement left after its `if`
+    was commented out.
+  - `-Wno-unused-result`: `NL_Util.cpp:4419`, where `fgetc()` skips bytes on purpose and bionic
+    declares it `warn_unused_result`.
+  - No `TCHAR`/`_T`/`ULONG` issues came up; the Linux paths already cover bionic.
+- **Debug builds:** the Android packages are release-only, so the debug config links `tbb`/`tbbmalloc`
+  with `TBB_USE_DEBUG=0`, and the dependency `usd-debug` points at the release USD package.
+
+**Approach B (CMake) used? why:** no. Approach A worked on the first real attempt, once
+`--platform-target` was passed.
+
+**Projects excluded on Android** (not included by `premake5-android.lua`): `_omni_solid`,
+`_smlib_dev` and `_smlib_tests` (Python); `HYDRA_USD_BREP` and its test (imaging); every test
+project (`prog_test*`, `SM_API_test*`, `SM_API_USD_test*`, `usd_test*`, `usd_brep_utils_test`);
+the tools (`smtess_usd`, `brep_geometry_validator`, `occt_to_usd`, `occt_dump`, `usd_to_occt`);
+and the examples. **Built:** `SMLib`, `SM_API`, `BREP_USD_DATA`, `USD_BREP_UTILS`, `BREP_SM_USD`,
+`SM_API_USD` (shared), and `BREP_STAGING`, `OCCT_BREP_IMPORT`, `OCCT_BREP_EXPORT` (static; they
+built cleanly, so they're in).
+
+**Resource collection:** `build.sh` fills `_build/android-aarch64/<cfg>/`:
+- `resources/omniSolid/resources/{generatedSchema.usda,plugInfo.json}`, from
+  `_build/schema/omniSolid/resources`. It's found at runtime through `OMNISOLID_PLUGIN_PATH`
+  (`UsdBrepUtilities.cpp:110`).
+- `resources/usd/`, OpenUSD's `lib/usd` plugin tree (19 `plugInfo.json` files). OpenUSD looks for it
+  at `<dir of libusd_plug.so>/usd`, or wherever `PXR_PLUGINPATH_NAME` points.
+- `extraLibs/`: `libusd_*.so`, `libtbb.so` and `libtbbmalloc.so` from the package, plus the NDK's
+  `libc++_shared.so`.
+- `MANIFEST.txt` lists the usd-brep `.so` files, the runtime `.so` files and all 66 resource
+  files, with how each is found.
+
+The `.so` files keep their debug info (158 MB tree); an APK build strips them.
+
+**Gate (2026-10-12):**
+```
+tools/android/build.sh release     # rc=0, 42 s from clean, 0 warnings
+file lib*.so                       # all six: ELF 64-bit LSB shared object, ARM aarch64
+llvm-nm -D -C libSM_API_USD.so     # T SmApiUsdTessellateBrepArray(UsdPrim const&, SmTessellationParams const&, int, double, vector<SmApiUsdTessellatedBrep>&)
+llvm-nm -D -C libSM_API.so         # T SmApiTessellate(...), T SmApiTessellateBoundaries(...)
+llvm-readelf -d lib*.so            # NEEDED: in-tree (usd-brep, libusd_*, libtbb*) or NDK (libc, libm,
+                                   #   libdl, liblog, libc++_shared); RUNPATH only $ORIGIN; no libpython
+./prebuild.sh && ./repo.sh build && ./tests.sh linux-x86_64
+                                   # host unchanged: rc=0/0/0, BUILD (RELEASE) SUCCEEDED (233.72 s), suite
+                                   #   counts identical to the phase 00 baseline
+```
 
 ## Upstream files edited
 | File | Lines | Change | Reason / error |
@@ -281,6 +367,7 @@ prebuild); nothing on the other platform references them.
 | `.gitignore` (new file) | — | Ignore `_build/`, `_compiler/`, `_repo/`, `_builtpackages/` | Upstream has no `.gitignore`. Keeps build output out of commits. |
 | `deps/target-deps-python.packman.xml.user` (new file) | — | Packman `.user` override pinning `python@3.12.13+nv5-${platform_target_abi}` | Upstream pin `3.12.15+nv1` is missing from the public CDN. Without this, `./prebuild.sh` fails on a fresh clone (see Known issues). Remove once upstream publishes or re-pins. |
 | `repo.toml` | 58-66 (added, nothing changed) | `[repo_build]` keys under `"platform_target:android-aarch64"`: `fetch.packman_target_files_to_pull = [deps/android-deps.packman.xml]`, `fetch.packman_extra_tokens.android_packages_dist`, and `vscode.generate_python_env_file/generate_python_setup_shell_script = false` | Pull Android deps instead of the Python + host-USD files; give the file remote an absolute path; avoid `KeyError: 'shell_ext'` (repo_man has no android platform mapping). `"platform:"` filters match the host, not the target, so they can't be used. |
+| `premake5.lua` | 12-16 (added, nothing changed) | `if _OPTIONS["platform-target"] == "android-aarch64" then include("premake5-android.lua") return end`, before the host workspace | The Android target needs its own workspace (toolchain, project subset, no Python). Without `--platform-target=android-aarch64` the file behaves exactly as upstream. |
 
 ## Source edits (verbatim diff hunks)
 ```diff
