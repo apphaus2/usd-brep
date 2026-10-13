@@ -173,6 +173,26 @@ Each `target-deps` entry is a symlink into the Packman cache (`PM_PACKAGES_ROOT`
 `~/.cache/packman`), and the `<name>/<version>` folder is the extracted package root. An Android
 package must extract to the same shape.
 
+## Android dependency packages (phase 01)
+
+Built by `apphaus2/usd-android-packages` (`scripts/build-all.sh`). Its README has the details.
+
+- `onetbb@2021.13.0-r1-android-aarch64` and `usd.core.release@25.11-r1-android-aarch64` are zips
+  in `usd-android-packages/dist/`, built for arm64-v8a, android-32, `c++_shared`, NDK r28c.
+- **oneTBB is 2021.13.0, not the latest (2023.1.0).** That's the version upstream's USD 25.11
+  package bundles. OpenUSD 25.11 doesn't compile with oneTBB 2023: `work/workTBB/dispatcher_impl.h`
+  tests `TBB_INTERFACE_VERSION_MAJOR` before any header defines it and takes the removed
+  `tbb::task` path.
+- The USD package mirrors upstream's layout, with TBB headers, libs and CMake config merged into
+  the USD tree, so `use_usd_tbb()` works unchanged. Library names are unversioned (`libtbb.so`,
+  `libusd_*.so`), since Android doesn't use `.so.N` symlinks.
+- **USD libraries present:** all 19 of `link_usd_common()` except `usd_python`, which isn't
+  built without Python. Imaging libraries (`usd_hd`, `usdImaging`, ...) aren't built either.
+- Runtime needs `libc++_shared.so` from the NDK, which isn't packaged.
+- Patches (OpenUSD-side, not usd-brep): `patches/OpenUSD-25.11/0001` fixes bionic `NOFILE` and
+  `__environ` in `pxr/base/arch`. `0002` adds `register` to the aarch64 `execve` asm-register
+  variables in `arch/stackTrace.cpp`, which clang otherwise ignores.
+
 ## Packman (phase 02)
 - Remote configuration mechanism used:
 - Deps file / entries added:
