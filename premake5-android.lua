@@ -90,6 +90,11 @@ workspace "usd-brep"
     buildoptions (concat_arrays(android_target_flags, {
         "-fdata-sections", "-ffunction-sections", "-funwind-tables", "-fstack-protector-strong",
         "-no-canonical-prefixes",
+        -- No a*b+c -> FMA contraction (clang's default on arm64; the host's gcc/x86-64 build has
+        -- none). Contraction changes rounding, which flips the tessellator's ties, so meshes
+        -- differ from the host's (BoltMBox1: 888 vs 884 triangles). Off: bit-identical to the
+        -- host, at no measurable speed cost on the Quest 3. See ANDROID_PORT_NOTES.md, phase 04.
+        "-ffp-contract=off",
         -- Upstream's Linux warning set, minus gcc-only -Wshadow=local, then the clang suppressions
         -- upstream already uses for macOS (must follow -Wall), including -Wno-missing-braces from
         -- macos_common_buildoptions().
@@ -129,7 +134,8 @@ workspace "usd-brep"
 
 -- Kernel, C API (incl. SmApiTessellate*), the USD data layer and SmApiUsd* (incl.
 -- SmApiUsdTessellateBrepArray), plus the OCCT .brep import/export libraries (native parsers, no
--- OpenCASCADE). Not built: Python modules, Hydra/imaging, tests and command-line tools.
+-- OpenCASCADE). Not built: Python modules, Hydra/imaging, tests and command-line tools, except the
+-- brepinfo sample (a PIE executable; clang links PIE by default for Android targets).
 include("source/SMLib/premake5.lua")
 include("source/SM_API/premake5.lua")
 include("source/BREP_USD_DATA/premake5.lua")
@@ -139,3 +145,4 @@ include("source/OCCT_BREP_IMPORT/premake5.lua")
 include("source/OCCT_BREP_EXPORT/premake5.lua")
 include("source/BREP_SM_USD/premake5.lua")
 include("source/SM_API_USD/premake5.lua")
+include("Examples/SM_API_USD/premake5.lua")

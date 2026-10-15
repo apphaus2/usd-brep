@@ -187,6 +187,7 @@ local function include_usd_dependent_stack()
     include("tools/usd_to_occt/premake5.lua")
     include("source/BREP_SM_USD/premake5.lua")
     include("source/SM_API_USD/premake5.lua")
+    include("Examples/SM_API_USD/premake5.lua") -- fork: brepinfo sample
     if usd_has_imaging() then
         include("source/HYDRA_USD_BREP/premake5.lua")
         include("tests/HYDRA_USD_BREP_test/premake5.lua")

@@ -302,6 +302,8 @@ A clean release build takes about 42 s with 10 jobs, with zero compiler warnings
   - `--target=aarch64-linux-android32` and `--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/<host>/sysroot`.
   - `-fPIC` (`pic "On"`), `-DANDROID`, `-ffunction-sections -fdata-sections -funwind-tables
     -fstack-protector-strong`.
+  - `-ffp-contract=off` (added in phase 04): no FMA contraction, so meshes are bit-identical to
+    the host's. See "Baseline (Quest 3)".
   - Link: `-nostdlib++` + `c++_shared`, `log`, `-Wl,--no-undefined,-z,relro,-z,now,--gc-sections,--build-id=sha1`.
   - `-D__ANDROID_API__=32` is **not** passed: clang defines it from `--target`, and redefining it
     would be a `-Wmacro-redefined` error under `FatalCompileWarnings`. The NDK sysroot has no
@@ -368,18 +370,82 @@ llvm-readelf -d lib*.so            # NEEDED: in-tree (usd-brep, libusd_*, libtbb
 | `deps/target-deps-python.packman.xml.user` (new file) | — | Packman `.user` override pinning `python@3.12.13+nv5-${platform_target_abi}` | Upstream pin `3.12.15+nv1` is missing from the public CDN. Without this, `./prebuild.sh` fails on a fresh clone (see Known issues). Remove once upstream publishes or re-pins. |
 | `repo.toml` | 58-66 (added, nothing changed) | `[repo_build]` keys under `"platform_target:android-aarch64"`: `fetch.packman_target_files_to_pull = [deps/android-deps.packman.xml]`, `fetch.packman_extra_tokens.android_packages_dist`, and `vscode.generate_python_env_file/generate_python_setup_shell_script = false` | Pull Android deps instead of the Python + host-USD files; give the file remote an absolute path; avoid `KeyError: 'shell_ext'` (repo_man has no android platform mapping). `"platform:"` filters match the host, not the target, so they can't be used. |
 | `premake5.lua` | 12-16 (added, nothing changed) | `if _OPTIONS["platform-target"] == "android-aarch64" then include("premake5-android.lua") return end`, before the host workspace | The Android target needs its own workspace (toolchain, project subset, no Python). Without `--platform-target=android-aarch64` the file behaves exactly as upstream. |
+| `premake5.lua` | 190 (added, nothing changed) | `include("Examples/SM_API_USD/premake5.lua")` in `include_usd_dependent_stack()`, after `SM_API_USD` | Phase 04: `./repo.sh build` must produce the `brepinfo` sample on the host. It's a new project in a new folder; nothing upstream is built differently. |
+| `Examples/README.md` | 17-18 (added) | Index entry for the new `SM_API_USD` category | The README asks for every example category to be indexed there. |
 
 ## Source edits (verbatim diff hunks)
 ```diff
 ```
 
 ## Baseline (host) — phase 04
-| File | faces/edges/verts | tris | open ms | import ms | tess ms |
-|------|-------------------|------|---------|-----------|---------|
+Sample: `Examples/SM_API_USD/brepinfo.cpp` (see its README). Placed under `Examples/<API layer>/`,
+following `Examples/README.md`, rather than `Examples/brepinfo/`.
+
+Machine: WSL2 Ubuntu 22.04, `linux-x86_64` release build. Quality is the default
+(`SmTessellationDefaults`: chord height off, 25° curve and surface angle) unless the row says
+otherwise. Timings are the median of 5 runs (sorted by tessellation time), healer on. `import` is
+`SmApiUsdImportBreps`. `tess` is `SmApiUsdTessellateBrepArray`, which includes its own re-import.
+Boundary points come from `--edges` (`SmApiTessellateBoundaries` at 25°).
+
+The `TestFiles/` USD inputs are all small (at most 236 triangles), so the medium and large rows use
+SMLib test models converted with `Examples/SM_API_USD/make_samples.sh` (upstream's
+`tools/scripts/smb_to_usd.py`).
+
+| File | breps | faces/edges/verts | tris | mesh pts | boundary pts | open ms | import ms | tess ms |
+|------|-------|-------------------|------|----------|--------------|---------|-----------|---------|
+| File | breps | faces/edges/verts | tris | mesh pts | boundary pts | open ms | import ms | tess ms |
+|------|-------|-------------------|------|----------|--------------|---------|-----------|---------|
+| `TestFiles/usd_TestFiles/sphere_nurbs.usda` (small, NURBS) | 1 | 2/2/2 | 224 | 114 | 18 | 5.8 | 14.4 | 8.6 |
+| `TestFiles/brep_validator/CubeBrepArray.usda` (2 packed BReps) | 2 | 12/24/16 | 24 | 16 | 48 | 7.1 | 10.3 | 3.9 |
+| `BoltMBox1.usdc` from `TestFiles/pt_TestFiles/Boolean/BoltMBox1.smb` (medium) | 1 | 31/68/39 | 884 | 430 | 441 | 15.4 | 27.7 | 39.4 |
+| `Platte.usdc` from `TestFiles/pt_TestFiles/Defeature/Platte.smb` (large) | 1 | 122/395/285 | 1856 | 915 | 1419 | 6.8 | 119.1 | 155.8 |
+| `Platte.usdc`, `--tol 0.05 --angle 10` (large, fine) | 1 | 122/395/285 | 6896 | 3435 | 3524 | 5.7 | 126.8 | 337.9 |
+
+All rows use `--edges`. Error paths checked:
+- No arguments or a bad option exit 2.
+- A missing file, a file with no `BrepArray` prims, and no schema plugin exit 3.
+- `RevitWallHealerCrash.usda` exits 1: 1 failed face, partial mesh kept.
+- Schema found through `PXR_PLUGINPATH_NAME` alone: exit 0.
 
 ## Baseline (Quest 3) — phase 04
-| File | faces/edges/verts | tris | open ms | import ms | tess ms |
-|------|-------------------|------|---------|-----------|---------|
+Device: Meta Quest 3 (`eureka`, Android 14, API 34), over USB with Windows `adb.exe` from WSL.
+Build: `tools/android/build.sh release` (NDK r28c, `-ffp-contract=off`, see below). Run:
+`tools/android/run-on-device.sh <file> --edges [--json]`. Same files and quality as the host table,
+median of 5 runs.
+
+**Counts: identical to the host for every file, compared BRep by BRep** (faces, edges, vertices,
+triangles, mesh points, failed faces, boundary polylines and points, from `--json`). The BoltMBox1
+triangle counts also match at 15°, 20°, 30° and 35°.
+
+| File | faces/edges/verts | tris | mesh pts | boundary pts | open ms | import ms | tess ms | tess vs host |
+|------|-------------------|------|----------|--------------|---------|-----------|---------|--------------|
+| `sphere_nurbs.usda` | 2/2/2 | 224 | 114 | 18 | 4.2 | 20.5 | 20.2 | 2.3× |
+| `CubeBrepArray.usda` | 12/24/16 | 24 | 16 | 48 | 4.4 | 14.1 | 9.6 | 2.5× |
+| `BoltMBox1.usdc` | 31/68/39 | 884 | 430 | 441 | 3.9 | 73.3 | 104.8 | 2.7× |
+| `Platte.usdc` | 122/395/285 | 1856 | 915 | 1419 | 3.8 | 274.9 | 411.7 | 2.6× |
+| `Platte.usdc`, `--tol 0.05 --angle 10` | 122/395/285 | 6896 | 3435 | 3524 | 3.7 | 272.8 | 700.4 | 2.1× |
+
+The Quest runs single-threaded import and tessellation about 2-3× slower than the WSL host. Stage
+open is faster on the Quest, likely because WSL file access is slower. Device payload
+(`/data/local/tmp/brepinfo`, debug info stripped): 65 MB, nearly all libraries. On the device,
+error paths behave as on the host: `Materials.usda` exits 3, `RevitWallHealerCrash.usda` exits 1.
+
+**Triangle-count difference investigated, root-caused and removed.** With the NDK defaults, BoltMBox1
+gave 888 triangles on the Quest against 884 on the host. It was deterministic on each side and
+moved by ±2 to ±4 with `--angle`, while the mesh points were identical (max |Δ| 8e-14). Diffing the
+two meshes (temporary dump, not committed) found:
+1. ~110 equal-quality ties resolved differently: the same quad split along the other diagonal.
+2. A different number of **exact duplicate triangles** that the tessellator emits on planar
+   annular faces (y ≈ 87.7): 4 on the host, 8 on the Quest. They're also the cause of the
+   mesh's non-manifold edges (23 vs 28).
+
+The cause is clang's default `-ffp-contract=on` for arm64, which fuses `a*b+c` into FMA
+instructions with different rounding. The host's gcc for x86-64 has no FMA without `-march`.
+Building the Android target with `-ffp-contract=off` (`premake5-android.lua`, a fork-only file,
+no source edits) makes the Quest output bit-identical to the host: same points, same 884 triangles,
+same 4 duplicates. Speed was the same within noise (Platte tess 405.7 → 407.7 ms, fine 735.3 →
+725.1 ms). Kept on, so host baselines check device output exactly. The duplicate triangles are an
+upstream tessellator defect present on both platforms (see Known issues).
 
 ## Known issues / follow-ups
 - **Upstream 1.0.0 pins a Python that is not publicly fetchable.**
@@ -398,6 +464,28 @@ llvm-readelf -d lib*.so            # NEEDED: in-tree (usd-brep, libusd_*, libtbb
   equals `ARCH_CACHE_LINE_SIZE`, so this is cosmetic. A possible OpenUSD fix: read `CTR_EL0` on
   Android/aarch64. Not patched; flagged for an OpenUSD upstream issue.
 - Stale comment at `premake5-libraries.lua:229` (says 26.08, no imaging; the pin is 25.11 with imaging).
+- **`SmApiUsdImportBreps` segfaults on `TestFiles/brep_validator/DefectiveCube.usda`** (host,
+  upstream code, no fork changes involved). It crashes on a null or bad pointer in
+  `SmOwningTopology::PreInsert(SmTopology*)`, called from `SmBrep::MakeTopologyFromData` ←
+  `SMU_BrepConvert::BrepMove_OneUsdBrepToSMLib` ← `BrepMove_UsdToSMLibWithResults` ←
+  `SmApiUsdImportBreps` (seen with an `LD_PRELOAD` SIGSEGV backtrace handler). The file is a
+  deliberately defective validator fixture. The import path should reject it with a status, not
+  crash. For the viewer (phase 05): a malformed file can take the process down, so consider
+  validating untrusted files first or isolating the import. Report upstream.
+- **Host and Android prebuilds share `_build/target-deps/`.** `./prebuild.sh -p android-aarch64`
+  (run by `tools/android/build.sh`) relinks `target-deps/usd/release` to the Android package. Host
+  binaries whose run path points there then fail with `libusd_python.so: cannot open shared
+  object file` until `./prebuild.sh` is run again. A stray `target-deps/tbb` link also stays behind
+  after a host prebuild (harmless). Workaround: run `./prebuild.sh` after an Android build.
+  A per-platform target-deps folder would fix it but means changing upstream `linkPath`s; not done.
+- **The tessellator emits exact duplicate triangles** on some planar faces with holes, on host and
+  Android alike: `SmApiUsdTessellateBrepArray` on `BoltMBox1.usdc` (from
+  `TestFiles/pt_TestFiles/Boolean/BoltMBox1.smb`) at default quality gives 4 duplicates, e.g. vertex
+  triples `(56,57,58)` twice, and 23 non-manifold edges. How many depends on floating-point
+  rounding (8 with FMA contraction). For rendering they're harmless but redundant. A mesh consumer
+  that expects manifold output would trip on them. Report upstream.
+- `brepinfo` isn't run by a test suite yet (`Examples/README.md` asks for that). The gates here
+  are manual.
 
 ## Upstream issue
 - URL:

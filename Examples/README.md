@@ -14,6 +14,8 @@ they do not add new API entry points.
   wrapper, including Boolean construction and bounding-box cost.
 - [SMLib](SMLib/README.md) — native kernel examples, including STEP surface
   derivative units and parameterization. These are not stable wrapper APIs.
+- [SM_API_USD](SM_API_USD/README.md) — native `SmApiUsd*` examples: `brepinfo`
+  reports, tessellates and times the BReps in a USD file, on the host and on Android.
 
 Each example should:
 

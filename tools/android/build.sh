@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Build the android-aarch64 target: kernel, C API, USD data layer, SmApiUsd* (tessellation) and the
-# OCCT .brep libraries, as shared libraries for Android arm64-v8a.
+# OCCT .brep libraries, as shared libraries for Android arm64-v8a, plus the brepinfo sample (PIE).
 #
 #   tools/android/build.sh [release|debug]      (default: release)
 #
@@ -84,17 +84,24 @@ cp "$NDK_SYSROOT_LIB/libc++_shared.so" "$OUT/extraLibs/"
     echo
     echo "[resources]"
     (cd "$OUT" && find resources -type f | LC_ALL=C sort)
+    echo
+    echo "[sample program, not needed by apps: Examples/SM_API_USD, run with tools/android/run-on-device.sh]"
+    echo "brepinfo"
 } > "$OUT/MANIFEST.txt"
 
 echo "== check"
 status=0
 ALLOWED_SYSTEM="libc.so libm.so libdl.so liblog.so libc++_shared.so"
 in_tree() { [ -f "$OUT/$1" ] || [ -f "$OUT/extraLibs/$1" ]; }
-for so in "$OUT"/lib*.so; do
+for so in "$OUT"/lib*.so "$OUT/brepinfo"; do
     name="$(basename "$so")"
     desc="$(file -b "$so" | cut -d, -f1-2)"
     echo "$name: $desc"
-    case "$desc" in *"ARM aarch64"*) ;; *) echo "  error: not an ARM aarch64 shared object" >&2; status=1 ;; esac
+    case "$name:$desc" in
+        brepinfo:*"pie executable, ARM aarch64"*) ;;
+        lib*:*"shared object, ARM aarch64"*) ;;
+        *) echo "  error: not an ARM aarch64 shared object / PIE executable" >&2; status=1 ;;
+    esac
     for needed in $("$NDK_BIN/llvm-readelf" -d "$so" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
         if [[ " $ALLOWED_SYSTEM " == *" $needed "* ]] || in_tree "$needed"; then
             continue
